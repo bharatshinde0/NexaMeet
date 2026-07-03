@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
-import { clearActiveMeeting, readActiveMeeting } from "../lib/meetingSession.js";
+import { clearActiveMeeting, readActiveMeeting, readJoinedMeetingHistory } from "../lib/meetingSession.js";
 import { useAuth } from "../state/AuthContext.jsx";
 
 const formatDateTime = (value) => {
@@ -48,6 +48,7 @@ export default function Dashboard() {
   const [editingCode, setEditingCode] = useState("");
   const [editForm, setEditForm] = useState({ title: "", scheduledAt: "" });
   const [activeMeeting, setActiveMeeting] = useState(() => readActiveMeeting());
+  const [joinedHistory] = useState(() => readJoinedMeetingHistory());
 
   const loadMeetings = async () => {
     const { data } = await api.get("/meetings");
@@ -183,6 +184,26 @@ export default function Dashboard() {
             <button className="icon-button" type="button" onClick={dismissActiveMeeting} title="Dismiss rejoin option">
               <X size={18} />
             </button>
+          </div>
+        </section>
+      )}
+
+      {joinedHistory.length > 0 && (
+        <section className="joined-history">
+          <div className="panel-heading">
+            <Clock size={20} />
+            <h2>Joined recently</h2>
+          </div>
+          <div className="joined-history-list">
+            {joinedHistory.map((meeting) => (
+              <button key={meeting.path} className="joined-history-item" type="button" onClick={() => navigate(meeting.path)}>
+                <span>
+                  <strong>{meeting.title}</strong>
+                  <small>{formatDateTime(meeting.savedAt)}</small>
+                </span>
+                <Video size={18} />
+              </button>
+            ))}
           </div>
         </section>
       )}

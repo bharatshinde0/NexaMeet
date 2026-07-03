@@ -24,7 +24,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { api } from "../lib/api.js";
-import { clearActiveMeeting, saveActiveMeeting } from "../lib/meetingSession.js";
+import { clearActiveMeeting, saveActiveMeeting, saveJoinedMeetingHistory } from "../lib/meetingSession.js";
 import { createSocket } from "../lib/socket.js";
 import { useAuth } from "../state/AuthContext.jsx";
 
@@ -47,6 +47,13 @@ const iceServers = buildIceServers();
 const canUseMediaDevices = () => Boolean(navigator.mediaDevices?.getUserMedia);
 
 const blockedMediaNames = new Set(["NotAllowedError", "SecurityError", "PermissionDeniedError"]);
+const mediaPermissionSteps = [
+  "Tap the small icon beside the website URL.",
+  "Tap Permissions or Site settings.",
+  "Tap Camera and select Allow.",
+  "Tap Microphone and select Allow.",
+  "Return to the meeting and tap Mic or Camera again.",
+];
 
 const describeMediaProblem = (err, kind = "camera and microphone") => {
   const label = kind === "audio" ? "Microphone" : kind === "video" ? "Camera" : "Camera and microphone";
@@ -56,6 +63,7 @@ const describeMediaProblem = (err, kind = "camera and microphone") => {
     return {
       title: `${label} unavailable`,
       detail: "Use an HTTPS Render URL in Chrome, Edge, or Safari. Camera and microphone do not work from insecure browser pages.",
+      steps: mediaPermissionSteps,
     };
   }
 
@@ -63,6 +71,7 @@ const describeMediaProblem = (err, kind = "camera and microphone") => {
     return {
       title: `${label} permission blocked`,
       detail: "Close floating bubbles/overlays, allow camera and microphone in browser site settings, then tap Try again.",
+      steps: mediaPermissionSteps,
     };
   }
 
@@ -70,6 +79,7 @@ const describeMediaProblem = (err, kind = "camera and microphone") => {
     return {
       title: `${label} not found`,
       detail: "Check that this device has a working camera/microphone and that browser site permission is allowed.",
+      steps: mediaPermissionSteps,
     };
   }
 
@@ -77,12 +87,14 @@ const describeMediaProblem = (err, kind = "camera and microphone") => {
     return {
       title: `${label} is busy`,
       detail: "Close other apps using the camera or microphone, then tap Try again.",
+      steps: mediaPermissionSteps,
     };
   }
 
   return {
     title: `${label} could not start`,
     detail: err?.message || "Check browser permissions and try again.",
+    steps: mediaPermissionSteps,
   };
 };
 
@@ -443,6 +455,10 @@ export default function MeetingRoom() {
           activeMeeting.inviteToken ? "join" : "meeting",
           { title: activeMeeting.title }
         );
+        saveJoinedMeetingHistory({
+          path: activeMeeting.inviteToken ? `/join/${activeMeeting.inviteToken}` : `/meeting/${activeMeetingCode}`,
+          title: activeMeeting.title,
+        });
         setMeeting(activeMeeting);
         setMessages((current) => mergeMessages(current, messageData.messages));
         setSummaries(summaryData.summaries);
@@ -1235,6 +1251,13 @@ function VideoTile({ tile, isMain = false, isPinned = false, onPin, onRetryAudio
               <Settings size={22} />
               <strong>{tile.mediaIssue.title}</strong>
               <small>{tile.mediaIssue.detail}</small>
+              {tile.mediaIssue.steps?.length > 0 && (
+                <ol className="tile-recovery-steps">
+                  {tile.mediaIssue.steps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
+              )}
               <div className="tile-recovery-actions">
                 <button type="button" onClick={onRetryAudio} disabled={tile.mediaBusy}>
                   <Mic size={15} /> Mic
