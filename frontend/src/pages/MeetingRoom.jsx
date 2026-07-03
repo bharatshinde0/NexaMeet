@@ -414,6 +414,11 @@ export default function MeetingRoom() {
           api.get(`/summaries/${activeMeetingCode}`),
         ]);
 
+        saveActiveMeeting(
+          activeMeeting.inviteToken || activeMeetingCode,
+          activeMeeting.inviteToken ? "join" : "meeting",
+          { title: activeMeeting.title }
+        );
         setMeeting(activeMeeting);
         setMessages((current) => mergeMessages(current, messageData.messages));
         setSummaries(summaryData.summaries);
@@ -862,7 +867,6 @@ export default function MeetingRoom() {
   };
 
   const leaveMeeting = async () => {
-    clearActiveMeeting();
     recognitionRef.current?.stop?.();
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();

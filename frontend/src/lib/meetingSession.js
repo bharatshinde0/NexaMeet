@@ -1,7 +1,7 @@
 const activeMeetingKey = "nexaMeet.activeMeeting";
 const activeMeetingMaxAgeMs = 24 * 60 * 60 * 1000;
 
-export const saveActiveMeeting = (value, type = "meeting") => {
+export const saveActiveMeeting = (value, type = "meeting", details = {}) => {
   if (!value) return;
 
   localStorage.setItem(
@@ -9,6 +9,7 @@ export const saveActiveMeeting = (value, type = "meeting") => {
     JSON.stringify({
       code: type === "meeting" ? value : undefined,
       path: type === "join" ? `/join/${value}` : `/meeting/${value}`,
+      title: details.title,
       savedAt: Date.now(),
     })
   );

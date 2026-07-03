@@ -12,9 +12,11 @@ import {
   Share2,
   Trash2,
   Video,
+  X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { clearActiveMeeting, readActiveMeeting } from "../lib/meetingSession.js";
 import { useAuth } from "../state/AuthContext.jsx";
 
 const formatDateTime = (value) => {
@@ -45,6 +47,7 @@ export default function Dashboard() {
   const [copiedCode, setCopiedCode] = useState("");
   const [editingCode, setEditingCode] = useState("");
   const [editForm, setEditForm] = useState({ title: "", scheduledAt: "" });
+  const [activeMeeting, setActiveMeeting] = useState(() => readActiveMeeting());
 
   const loadMeetings = async () => {
     const { data } = await api.get("/meetings");
@@ -143,6 +146,11 @@ export default function Dashboard() {
     }
   };
 
+  const dismissActiveMeeting = () => {
+    clearActiveMeeting();
+    setActiveMeeting(null);
+  };
+
   return (
     <main className="app-shell dashboard-page">
       <header className="topbar dashboard-hero">
@@ -160,6 +168,24 @@ export default function Dashboard() {
           </button>
         </div>
       </header>
+
+      {activeMeeting?.path && (
+        <section className="rejoin-banner">
+          <div>
+            <p className="eyebrow">Recent meeting</p>
+            <h2>{activeMeeting.title || "Meeting in progress"}</h2>
+            <p>You can rejoin with your saved browser permissions.</p>
+          </div>
+          <div className="share-actions">
+            <button className="primary-button" type="button" onClick={() => navigate(activeMeeting.path)}>
+              <Video size={18} /> Rejoin
+            </button>
+            <button className="icon-button" type="button" onClick={dismissActiveMeeting} title="Dismiss rejoin option">
+              <X size={18} />
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className="dashboard-grid">
         <form className="workspace-panel" onSubmit={createMeeting}>

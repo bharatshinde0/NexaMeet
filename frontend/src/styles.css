@@ -603,6 +603,29 @@ p {
   justify-content: flex-end;
 }
 
+.rejoin-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  border: 1px solid #b7e3dc;
+  border-radius: 8px;
+  padding: 16px;
+  color: #0f172a;
+  background: #f0fdfa;
+}
+
+.rejoin-banner h2 {
+  margin-top: 2px;
+  font-size: 1.08rem;
+}
+
+.rejoin-banner p:not(.eyebrow) {
+  margin-top: 4px;
+  color: #475467;
+}
+
 .meeting-rows {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
@@ -1480,6 +1503,11 @@ p {
   .share-banner {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .rejoin-banner {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .share-actions {
