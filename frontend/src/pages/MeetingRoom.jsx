@@ -863,7 +863,23 @@ export default function MeetingRoom() {
 
   const leaveMeeting = async () => {
     clearActiveMeeting();
-    navigate("/");
+    recognitionRef.current?.stop?.();
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+    socketRef.current?.disconnect();
+    peersRef.current.forEach((peer) => peer.close());
+    peersRef.current.clear();
+    offeredPeersRef.current.clear();
+    pendingCandidatesRef.current.clear();
+    localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = null;
+    setLocalStream(null);
+    setRemoteStreams([]);
+    setParticipants([]);
+    setPeerStates({});
+    setSocketStatus("offline");
+    navigate("/", { replace: true });
   };
 
   const toggleSidePanel = (tab) => {
@@ -920,7 +936,7 @@ export default function MeetingRoom() {
               {!hasRemoteParticipants && (
                 <div className="meeting-waiting-panel">
                   <strong>Waiting for others to join</strong>
-                  <p>Share this meeting link from another phone, laptop, or browser profile to see the full Zoom-style multi-person call.</p>
+                  <p>Share this meeting link from another phone, laptop, or browser profile to start a full multi-person call.</p>
                   <div className="meeting-waiting-actions">
                     <button className="secondary-button" type="button" onClick={copyInvite}>
                       {copied ? <Check size={18} /> : <Copy size={18} />} Copy link
