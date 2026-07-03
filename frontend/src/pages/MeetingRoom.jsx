@@ -503,11 +503,12 @@ export default function MeetingRoom() {
         saveActiveMeeting(
           activeMeeting.inviteToken || activeMeetingCode,
           activeMeeting.inviteToken ? "join" : "meeting",
-          { title: activeMeeting.title }
+          { title: activeMeeting.title, expiresAt: activeMeeting.expiresAt }
         );
         saveJoinedMeetingHistory({
           path: activeMeeting.inviteToken ? `/join/${activeMeeting.inviteToken}` : `/meeting/${activeMeetingCode}`,
           title: activeMeeting.title,
+          expiresAt: activeMeeting.expiresAt,
         });
         setMeeting(activeMeeting);
         setMessages((current) => mergeMessages(current, messageData.messages));
@@ -666,7 +667,7 @@ export default function MeetingRoom() {
         socket.on("socket-error", (payload) => setError(payload.message));
         socket.on("socket-warning", (payload) => setError(payload.message));
       } catch (err) {
-        if (err.response?.status === 404) {
+        if (err.response?.status === 404 || err.response?.status === 410) {
           clearActiveMeeting();
           navigate("/", { replace: true });
           return;

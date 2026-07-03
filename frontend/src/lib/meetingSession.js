@@ -1,7 +1,13 @@
 const activeMeetingKey = "nexaMeet.activeMeeting";
 const joinedMeetingHistoryKey = "nexaMeet.joinedMeetingHistory";
-const activeMeetingMaxAgeMs = 24 * 60 * 60 * 1000;
+const activeMeetingMaxAgeMs = 12 * 60 * 60 * 1000;
 const joinedMeetingHistoryLimit = 2;
+
+const isExpired = (item) => {
+  if (!item) return true;
+  if (item.expiresAt && new Date(item.expiresAt).getTime() <= Date.now()) return true;
+  return Date.now() - Number(item.savedAt || 0) > activeMeetingMaxAgeMs;
+};
 
 export const saveActiveMeeting = (value, type = "meeting", details = {}) => {
   if (!value) return;
@@ -12,6 +18,7 @@ export const saveActiveMeeting = (value, type = "meeting", details = {}) => {
       code: type === "meeting" ? value : undefined,
       path: type === "join" ? `/join/${value}` : `/meeting/${value}`,
       title: details.title,
+      expiresAt: details.expiresAt,
       savedAt: Date.now(),
     })
   );
@@ -29,7 +36,7 @@ export const readActiveMeeting = () => {
   try {
     const activeMeeting = JSON.parse(localStorage.getItem(activeMeetingKey) || "null");
 
-    if ((!activeMeeting?.code && !activeMeeting?.path) || Date.now() - Number(activeMeeting.savedAt || 0) > activeMeetingMaxAgeMs) {
+    if ((!activeMeeting?.code && !activeMeeting?.path) || isExpired(activeMeeting)) {
       localStorage.removeItem(activeMeetingKey);
       return null;
     }
@@ -47,6 +54,7 @@ export const saveJoinedMeetingHistory = (meeting) => {
   const nextMeeting = {
     path: meeting.path,
     title: meeting.title || "Meeting",
+    expiresAt: meeting.expiresAt,
     savedAt: Date.now(),
   };
   const history = readJoinedMeetingHistory().filter((item) => item.path !== nextMeeting.path);
@@ -63,7 +71,7 @@ export const readJoinedMeetingHistory = () => {
     }
 
     return history
-      .filter((item) => item?.path)
+      .filter((item) => item?.path && !isExpired(item))
       .sort((first, second) => Number(second.savedAt || 0) - Number(first.savedAt || 0))
       .slice(0, joinedMeetingHistoryLimit);
   } catch {

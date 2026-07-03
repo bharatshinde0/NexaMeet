@@ -6,6 +6,13 @@ import User from "../models/user.model.js";
 import { normalizeMeetingCode } from "../utils/normalizeMeetingCode.js";
 
 const rooms = new Map();
+const endedMeetingAccessMs = () => Number(process.env.ENDED_MEETING_ACCESS_MS) || 12 * 60 * 60 * 1000;
+const endedMeetingExpiresAt = (value = new Date()) => new Date(new Date(value).getTime() + endedMeetingAccessMs());
+const isMeetingExpired = (meeting) => {
+  if (!meeting) return false;
+  if (meeting.expiresAt && new Date(meeting.expiresAt).getTime() <= Date.now()) return true;
+  return meeting.status === "ended" && meeting.endedAt && Date.now() - new Date(meeting.endedAt).getTime() > endedMeetingAccessMs();
+};
 
 const getRoom = (meetingCode) => {
   if (!rooms.has(meetingCode)) {
@@ -78,10 +85,23 @@ export const connectToSocketIO = (server, options = {}) => {
       const room = getRoom(currentMeetingCode);
       room.set(socket.id, participant);
 
+      const existingMeeting = await Meeting.findOne({ code: currentMeetingCode });
+
+      if (isMeetingExpired(existingMeeting)) {
+        socket.emit("socket-error", { message: "Meeting access has expired" });
+        room.delete(socket.id);
+        socket.leave(currentMeetingCode);
+        if (room.size === 0) {
+          rooms.delete(currentMeetingCode);
+        }
+        currentMeetingCode = null;
+        return;
+      }
+
       const meeting = await Meeting.findOneAndUpdate(
         { code: currentMeetingCode },
         {
-          $set: { status: "active", startedAt: new Date() },
+          $set: { status: "active", startedAt: existingMeeting?.startedAt || new Date() },
           $push: {
             participants: {
               user: authenticatedUser?._id,
@@ -288,6 +308,17 @@ export const connectToSocketIO = (server, options = {}) => {
       socket.to(currentMeetingCode).emit("room-users", [...room.values()]);
 
       if (room.size === 0) {
+        const endedAt = new Date();
+        await Meeting.updateOne(
+          { code: currentMeetingCode },
+          {
+            $set: {
+              status: "ended",
+              endedAt,
+              expiresAt: endedMeetingExpiresAt(endedAt),
+            },
+          }
+        );
         rooms.delete(currentMeetingCode);
       }
     });

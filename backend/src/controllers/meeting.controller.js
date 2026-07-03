@@ -6,7 +6,9 @@ import { normalizeMeetingCode } from "../utils/normalizeMeetingCode.js";
 const createMeetingCode = () => crypto.randomBytes(4).toString("hex").toUpperCase();
 const createInviteToken = () => crypto.randomBytes(12).toString("base64url");
 const meetingRetentionMs = () => Number(process.env.MEETING_RETENTION_MS) || 24 * 60 * 60 * 1000;
+const endedMeetingAccessMs = () => Number(process.env.ENDED_MEETING_ACCESS_MS) || 12 * 60 * 60 * 1000;
 const meetingExpiresAt = (value = new Date()) => new Date(new Date(value).getTime() + meetingRetentionMs());
+const endedMeetingExpiresAt = (value = new Date()) => new Date(new Date(value).getTime() + endedMeetingAccessMs());
 
 const createUniqueInviteToken = async () => {
   let inviteToken = createInviteToken();
@@ -39,6 +41,21 @@ const serializeMeeting = (meeting, userId) => {
     roomCode: data.code,
     canManage: Boolean(canManage),
   };
+};
+
+const isMeetingExpired = (meeting) => {
+  if (!meeting) return false;
+  if (meeting.expiresAt && new Date(meeting.expiresAt).getTime() <= Date.now()) return true;
+  return meeting.status === "ended" && meeting.endedAt && Date.now() - new Date(meeting.endedAt).getTime() > endedMeetingAccessMs();
+};
+
+const rejectExpiredMeeting = (meeting, res) => {
+  if (!isMeetingExpired(meeting)) {
+    return false;
+  }
+
+  res.status(410).json({ message: "Meeting access has expired" });
+  return true;
 };
 
 export const createMeeting = asyncHandler(async (req, res) => {
@@ -84,6 +101,8 @@ export const getMeeting = asyncHandler(async (req, res) => {
     return res.status(404).json({ message: "Meeting not found" });
   }
 
+  if (rejectExpiredMeeting(meeting, res)) return;
+
   await ensureMeetingInviteToken(meeting);
 
   res.json({ meeting: serializeMeeting(meeting, req.user._id) });
@@ -96,6 +115,8 @@ export const getMeetingByInvite = asyncHandler(async (req, res) => {
   if (!meeting) {
     return res.status(404).json({ message: "Invite link is invalid or expired" });
   }
+
+  if (rejectExpiredMeeting(meeting, res)) return;
 
   res.json({ meeting: serializeMeeting(meeting, req.user._id) });
 });
@@ -148,6 +169,8 @@ export const startMeeting = asyncHandler(async (req, res) => {
     return res.status(404).json({ message: "Meeting not found" });
   }
 
+  if (rejectExpiredMeeting(meeting, res)) return;
+
   meeting.status = "active";
   meeting.startedAt = meeting.startedAt || new Date();
   meeting.expiresAt = meeting.expiresAt || meetingExpiresAt(meeting.scheduledAt || meeting.startedAt);
@@ -166,6 +189,7 @@ export const endMeeting = asyncHandler(async (req, res) => {
 
   meeting.status = "ended";
   meeting.endedAt = new Date();
+  meeting.expiresAt = endedMeetingExpiresAt(meeting.endedAt);
   await meeting.save();
 
   res.json({ meeting: serializeMeeting(meeting, req.user._id) });

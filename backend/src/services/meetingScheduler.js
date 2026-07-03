@@ -3,6 +3,7 @@ import Message from "../models/message.model.js";
 import Summary from "../models/summary.model.js";
 
 const meetingRetentionMs = () => Number(process.env.MEETING_RETENTION_MS) || 24 * 60 * 60 * 1000;
+const endedMeetingAccessMs = () => Number(process.env.ENDED_MEETING_ACCESS_MS) || 12 * 60 * 60 * 1000;
 const meetingCleanupIntervalMs = () => Number(process.env.MEETING_CLEANUP_INTERVAL_MS) || 5 * 60 * 1000;
 
 const activateDueMeetings = async () => {
@@ -28,9 +29,11 @@ const activateDueMeetings = async () => {
 const deleteExpiredMeetings = async () => {
   const now = new Date();
   const expiresBefore = new Date(Date.now() - meetingRetentionMs());
+  const endedBefore = new Date(Date.now() - endedMeetingAccessMs());
   const expiredMeetings = await Meeting.find({
     $or: [
       { expiresAt: { $lte: now } },
+      { status: "ended", endedAt: { $lte: endedBefore } },
       { scheduledAt: { $lte: expiresBefore } },
       { scheduledAt: { $exists: false }, createdAt: { $lte: expiresBefore } },
     ],
