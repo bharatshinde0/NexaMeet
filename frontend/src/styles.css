@@ -645,35 +645,83 @@ p {
 }
 
 .joined-history {
+  position: relative;
+  overflow: hidden;
   display: grid;
-  gap: 12px;
+  gap: 14px;
   margin-top: 18px;
-  border: 1px solid #e5eaf1;
+  border: 1px solid #c7d7ee;
   border-radius: 8px;
-  padding: 16px;
-  background: #ffffff;
-  box-shadow: 0 14px 36px rgba(21, 30, 49, 0.06);
+  padding: 18px;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.09), rgba(20, 184, 166, 0.08)),
+    #ffffff;
+  box-shadow: 0 18px 46px rgba(21, 30, 49, 0.1);
+}
+
+.joined-history::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(90deg, #2563eb, #14b8a6, #f59e0b);
+}
+
+.joined-history .panel-heading {
+  justify-content: space-between;
+}
+
+.joined-history .panel-heading svg {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  padding: 8px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #2563eb, #0f766e);
+  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.22);
 }
 
 .joined-history-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .joined-history-item {
+  position: relative;
   min-width: 0;
-  min-height: 58px;
+  min-height: 72px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  border: 1px solid #dbe5f2;
+  gap: 14px;
+  border: 1px solid rgba(37, 99, 235, 0.14);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 13px 14px;
   color: #172033;
-  background: #f8fafc;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.92)),
+    #f8fafc;
   text-align: left;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.joined-history-item:hover,
+.joined-history-item:focus-visible {
+  border-color: rgba(37, 99, 235, 0.42);
+  box-shadow: 0 16px 34px rgba(37, 99, 235, 0.14);
+  transform: translateY(-2px);
+}
+
+.joined-history-item > svg {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: 999px;
+  padding: 9px;
+  color: #ffffff;
+  background: #0f766e;
 }
 
 .joined-history-item strong,
