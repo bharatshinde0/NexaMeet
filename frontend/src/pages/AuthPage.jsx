@@ -7,7 +7,7 @@ const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 const authErrorMessage = (err) => {
   if (err.code === "ECONNABORTED") {
-    return "Server took too long to respond. If this is Render free hosting, wait a minute for the backend to wake up and try again.";
+    return "The server is still waking up. On Render free hosting, open the backend health URL once, wait until it says ok, then try again.";
   }
 
   if (err.message === "Network Error") {

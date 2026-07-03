@@ -13,7 +13,7 @@ const resolveApiUrl = () => {
 
 export const api = axios.create({
   baseURL: resolveApiUrl(),
-  timeout: 20000,
+  timeout: 75000,
 });
 
 const readStoredToken = () => {
