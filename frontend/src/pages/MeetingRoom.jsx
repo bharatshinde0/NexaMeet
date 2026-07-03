@@ -86,6 +86,30 @@ const describeMediaProblem = (err, kind = "camera and microphone") => {
   };
 };
 
+const describeScreenShareProblem = (err) => {
+  if (!window.isSecureContext) {
+    return "Screen sharing requires HTTPS. Open NexaMeet with the secure https:// Render link and try again.";
+  }
+
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    return "Screen sharing is not supported on this browser or phone. Use desktop Chrome, Edge, or another browser that supports screen sharing.";
+  }
+
+  if (err?.name === "NotAllowedError" || err?.name === "SecurityError") {
+    return "Screen sharing permission was blocked. Allow screen sharing in the browser prompt and try again.";
+  }
+
+  if (err?.name === "NotFoundError") {
+    return "No screen or window was available to share on this device.";
+  }
+
+  if (err?.name === "AbortError") {
+    return "Screen sharing was cancelled before it started.";
+  }
+
+  return err?.message || "Screen sharing could not start on this device.";
+};
+
 const messageKey = (message) =>
   message._id || message.clientId || `${message.senderName}-${message.createdAt}-${message.content}`;
 
@@ -683,15 +707,21 @@ export default function MeetingRoom() {
     if (sharingScreen) return;
 
     try {
-      if (!navigator.mediaDevices?.getDisplayMedia) {
-        setError("Screen sharing needs HTTPS when opening NexaMeet from another device.");
+      if (!window.isSecureContext || !navigator.mediaDevices?.getDisplayMedia) {
+        setError(describeScreenShareProblem());
         return;
       }
 
       const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const [screenTrack] = screenStream.getVideoTracks();
+
+      if (!screenTrack) {
+        throw new Error("No screen track was selected.");
+      }
+
       await replaceVideoTrack(screenTrack);
       setSharingScreen(true);
+      setError("");
 
       screenTrack.onended = async () => {
         if (!canUseMediaDevices()) {
@@ -699,12 +729,18 @@ export default function MeetingRoom() {
           return;
         }
 
-        const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        await replaceVideoTrack(cameraStream.getVideoTracks()[0]);
-        setSharingScreen(false);
+        try {
+          const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          await replaceVideoTrack(cameraStream.getVideoTracks()[0]);
+        } catch (mediaError) {
+          setMediaIssue(describeMediaProblem(mediaError, "video"));
+        } finally {
+          setSharingScreen(false);
+        }
       };
     } catch (err) {
-      setError(err.message || "Screen sharing failed");
+      setSharingScreen(false);
+      setError(describeScreenShareProblem(err));
     }
   };
 
