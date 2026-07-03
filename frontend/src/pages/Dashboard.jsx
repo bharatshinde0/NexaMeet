@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
-import { clearActiveMeeting, readActiveMeeting, readJoinedMeetingHistory } from "../lib/meetingSession.js";
+import { clearActiveMeeting, readActiveMeeting, readJoinedMeetingHistory, removeJoinedMeetingHistory } from "../lib/meetingSession.js";
 import { useAuth } from "../state/AuthContext.jsx";
 
 const formatDateTime = (value) => {
@@ -48,7 +48,7 @@ export default function Dashboard() {
   const [editingCode, setEditingCode] = useState("");
   const [editForm, setEditForm] = useState({ title: "", scheduledAt: "" });
   const [activeMeeting, setActiveMeeting] = useState(() => readActiveMeeting());
-  const [joinedHistory] = useState(() => readJoinedMeetingHistory());
+  const [joinedHistory, setJoinedHistory] = useState(() => readJoinedMeetingHistory());
 
   const loadMeetings = async () => {
     const { data } = await api.get("/meetings");
@@ -152,6 +152,11 @@ export default function Dashboard() {
     setActiveMeeting(null);
   };
 
+  const removeJoinedMeeting = (path) => {
+    removeJoinedMeetingHistory(path);
+    setJoinedHistory(readJoinedMeetingHistory());
+  };
+
   return (
     <main className="app-shell dashboard-page">
       <header className="topbar dashboard-hero">
@@ -196,13 +201,18 @@ export default function Dashboard() {
           </div>
           <div className="joined-history-list">
             {joinedHistory.map((meeting) => (
-              <button key={meeting.path} className="joined-history-item" type="button" onClick={() => navigate(meeting.path)}>
-                <span>
-                  <strong>{meeting.title}</strong>
-                  <small>{formatDateTime(meeting.savedAt)}</small>
-                </span>
-                <Video size={18} />
-              </button>
+              <article key={meeting.path} className="joined-history-item">
+                <button className="joined-history-main" type="button" onClick={() => navigate(meeting.path)}>
+                  <span>
+                    <strong>{meeting.title}</strong>
+                    <small>{formatDateTime(meeting.savedAt)}</small>
+                  </span>
+                  <Video size={18} />
+                </button>
+                <button className="joined-history-remove" type="button" onClick={() => removeJoinedMeeting(meeting.path)} title="Remove from joined history">
+                  <X size={16} />
+                </button>
+              </article>
             ))}
           </div>
         </section>

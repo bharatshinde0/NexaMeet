@@ -79,3 +79,9 @@ export const readJoinedMeetingHistory = () => {
     return [];
   }
 };
+
+export const removeJoinedMeetingHistory = (path) => {
+  if (!path) return;
+  const history = readJoinedMeetingHistory().filter((item) => item.path !== path);
+  localStorage.setItem(joinedMeetingHistoryKey, JSON.stringify(history));
+};

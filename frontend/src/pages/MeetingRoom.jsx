@@ -875,7 +875,7 @@ export default function MeetingRoom() {
         return;
       }
 
-      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       const [screenTrack] = screenStream.getVideoTracks();
 
       if (!screenTrack) {
@@ -885,7 +885,9 @@ export default function MeetingRoom() {
       screenStreamRef.current = screenStream;
       setLocalScreenStream(screenStream);
       peersRef.current.forEach((peer, socketId) => {
-        peer.addTrack(screenTrack, screenStream);
+        screenStream.getTracks().forEach((track) => {
+          peer.addTrack(track, screenStream);
+        });
         sendOffer(socketId, { force: true }).catch(() => {});
       });
       socketRef.current?.emit("screen-share-state", { sharing: true, streamId: screenStream.id });
