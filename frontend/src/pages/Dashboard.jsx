@@ -215,7 +215,7 @@ export default function Dashboard() {
             Meeting code
             <input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} placeholder="AB12CD34" required />
           </label>
-          <button className="secondary-button" type="submit">
+          <button className={`secondary-button join-code-button ${joinCode.trim() ? "is-ready" : ""}`} type="submit">
             Join meeting
           </button>
         </form>
