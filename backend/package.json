@@ -1,0 +1,30 @@
+{
+  "name": "new-video-call-backend",
+  "version": "1.0.0",
+  "description": "MERN video calling and chat backend with Socket.IO signaling",
+  "license": "ISC",
+  "author": "bharat",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "dev": "node scripts/freePort.js && nodemon src/app.js",
+    "start": "node src/app.js",
+    "prod": "pm2 start src/app.js --name new-video-call-api"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "http-status": "^2.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^9.7.3",
+    "morgan": "^1.10.0",
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
