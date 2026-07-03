@@ -26,7 +26,21 @@ import { api } from "../lib/api.js";
 import { createSocket } from "../lib/socket.js";
 import { useAuth } from "../state/AuthContext.jsx";
 
-const iceServers = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:global.stun.twilio.com:3478" }];
+const buildIceServers = () => {
+  const servers = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:global.stun.twilio.com:3478" }];
+
+  if (import.meta.env.VITE_TURN_URL) {
+    servers.push({
+      urls: import.meta.env.VITE_TURN_URL,
+      username: import.meta.env.VITE_TURN_USERNAME,
+      credential: import.meta.env.VITE_TURN_CREDENTIAL,
+    });
+  }
+
+  return servers;
+};
+
+const iceServers = buildIceServers();
 const insecureLanMediaMessage =
   "Camera and microphone need HTTPS when opening NexaMeet from another device. You can still join chat/details, but video needs HTTPS or localhost.";
 
@@ -66,6 +80,7 @@ export default function MeetingRoom() {
   const localStreamRef = useRef(null);
   const socketRef = useRef(null);
   const peersRef = useRef(new Map());
+  const offeredPeersRef = useRef(new Set());
   const pendingCandidatesRef = useRef(new Map());
   const mediaRecorderRef = useRef(null);
   const recordingChunksRef = useRef([]);
@@ -74,6 +89,7 @@ export default function MeetingRoom() {
 
   const [meeting, setMeeting] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState([]);
+  const [peerStates, setPeerStates] = useState({});
   const [localStream, setLocalStream] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -81,6 +97,7 @@ export default function MeetingRoom() {
   const [generatingSummary, setGeneratingSummary] = useState(false);
   const [messageText, setMessageText] = useState("");
   const [error, setError] = useState("");
+  const [socketStatus, setSocketStatus] = useState("connecting");
   const [activeTab, setActiveTab] = useState("chat");
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
@@ -118,6 +135,7 @@ export default function MeetingRoom() {
       videoEnabled: participant?.videoEnabled,
       participant,
       stream: remoteStreams.find((item) => item.socketId === participant.socketId)?.stream || null,
+      connectionState: peerStates[participant.socketId] || "connecting",
     }));
   const videoTiles = [
     {
@@ -135,6 +153,7 @@ export default function MeetingRoom() {
   const useTwoPersonLayout = videoTiles.length <= 2;
   const pinnedTile = videoTiles.find((tile) => tile.id === pinnedTileId) || videoTiles[0];
   const sideTiles = videoTiles.filter((tile) => tile.id !== pinnedTile.id);
+  const hasRemoteParticipants = remoteTiles.length > 0;
 
   const refreshMessages = useCallback(async () => {
     const { data } = await api.get(`/messages/${code}?limit=1000`);
@@ -147,11 +166,21 @@ export default function MeetingRoom() {
       peer.close();
       peersRef.current.delete(socketId);
     }
+    offeredPeersRef.current.delete(socketId);
     setRemoteStreams((current) => current.filter((item) => item.socketId !== socketId));
+    setPeerStates((current) => {
+      const nextStates = { ...current };
+      delete nextStates[socketId];
+      return nextStates;
+    });
   }, []);
 
   const emitParticipantState = useCallback((nextState) => {
     socketRef.current?.emit("participant-state", nextState);
+  }, []);
+
+  const setPeerState = useCallback((socketId, state) => {
+    setPeerStates((current) => ({ ...current, [socketId]: state }));
   }, []);
 
   const flushPendingCandidates = useCallback(async (socketId, peer) => {
@@ -167,6 +196,20 @@ export default function MeetingRoom() {
     }
   }, []);
 
+  const sendOffer = useCallback(async (socketId) => {
+    const peer = peersRef.current.get(socketId);
+
+    if (!peer || peer.signalingState !== "stable" || offeredPeersRef.current.has(socketId)) {
+      return;
+    }
+
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    offeredPeersRef.current.add(socketId);
+    socketRef.current?.emit("webrtc-offer", { to: socketId, offer });
+    setPeerState(socketId, "connecting");
+  }, [setPeerState]);
+
   const createPeer = useCallback(
     async (socketId, shouldCreateOffer) => {
       if (!socketId || socketId === socketRef.current?.id) {
@@ -174,11 +217,16 @@ export default function MeetingRoom() {
       }
 
       if (peersRef.current.has(socketId)) {
-        return peersRef.current.get(socketId);
+        const existingPeer = peersRef.current.get(socketId);
+        if (shouldCreateOffer) {
+          await sendOffer(socketId);
+        }
+        return existingPeer;
       }
 
       const peer = new RTCPeerConnection({ iceServers });
       peersRef.current.set(socketId, peer);
+      setPeerState(socketId, "connecting");
 
       localStreamRef.current?.getTracks().forEach((track) => {
         peer.addTrack(track, localStreamRef.current);
@@ -193,6 +241,7 @@ export default function MeetingRoom() {
       peer.ontrack = (event) => {
         const [stream] = event.streams;
         if (!stream) return;
+        setPeerState(socketId, "connected");
 
         setRemoteStreams((current) => {
           const existing = current.find((item) => item.socketId === socketId);
@@ -204,20 +253,30 @@ export default function MeetingRoom() {
       };
 
       peer.onconnectionstatechange = () => {
+        setPeerState(socketId, peer.connectionState);
         if (["closed", "failed", "disconnected"].includes(peer.connectionState)) {
           removePeer(socketId);
         }
       };
 
+      peer.oniceconnectionstatechange = () => {
+        if (peer.iceConnectionState === "connected" || peer.iceConnectionState === "completed") {
+          setPeerState(socketId, "connected");
+        }
+
+        if (peer.iceConnectionState === "failed") {
+          setPeerState(socketId, "failed");
+          peer.restartIce?.();
+        }
+      };
+
       if (shouldCreateOffer) {
-        const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
-        socketRef.current?.emit("webrtc-offer", { to: socketId, offer });
+        await sendOffer(socketId);
       }
 
       return peer;
     },
-    [removePeer]
+    [removePeer, sendOffer, setPeerState]
   );
 
   useEffect(() => {
@@ -271,6 +330,7 @@ export default function MeetingRoom() {
         socketRef.current = socket;
 
         socket.on("connect", () => {
+          setSocketStatus("connected");
           socket.emit("join-call", { meetingCode: code, name: user?.name, userId: user?.id });
           socket.emit("participant-state", {
             audioEnabled: stream.getAudioTracks().some((track) => track.enabled),
@@ -279,21 +339,33 @@ export default function MeetingRoom() {
           });
         });
 
+        socket.on("connect_error", (err) => {
+          setSocketStatus("offline");
+          setError(`Could not connect to live meeting server: ${err.message}`);
+        });
+
+        socket.on("disconnect", () => {
+          setSocketStatus("offline");
+        });
+
         socket.on("room-users", async (roomUsers) => {
           setParticipants(roomUsers);
           for (const participant of roomUsers) {
             if (participant.socketId !== socket.id) {
-              await createPeer(participant.socketId, false);
+              await createPeer(participant.socketId, socket.id > participant.socketId);
             }
           }
         });
 
-        socket.on("participant-joined", (participant) => {
+        socket.on("participant-joined", async (participant) => {
           setParticipants((current) => [...current.filter((item) => item.socketId !== participant.socketId), participant]);
+          if (participant.socketId !== socket.id) {
+            await createPeer(participant.socketId, socket.id > participant.socketId);
+          }
         });
 
         socket.on("user-joined", async (socketId) => {
-          await createPeer(socketId, true);
+          await createPeer(socketId, socket.id > socketId);
         });
 
         socket.on("participant-left", (participant) => {
@@ -377,8 +449,10 @@ export default function MeetingRoom() {
       socketRef.current?.disconnect();
       peersRef.current.forEach((peer) => peer.close());
       peersRef.current.clear();
+      offeredPeersRef.current.clear();
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
       setLocalStream(null);
+      setPeerStates({});
     };
   }, [code, createPeer, removePeer, token, user]);
 
@@ -636,6 +710,11 @@ export default function MeetingRoom() {
           <div>
             <p className="eyebrow">Meeting code {code}</p>
             <h1>{meeting?.title || "Meeting"}</h1>
+            <div className="meeting-live-meta">
+              <span className={`live-dot ${socketStatus}`}></span>
+              <span>{socketStatus === "connected" ? "Live room connected" : "Connecting live room"}</span>
+              <span>{participants.length || 1} participant{(participants.length || 1) === 1 ? "" : "s"}</span>
+            </div>
           </div>
           <div className="meeting-header-actions">
             <button className="icon-button" type="button" onClick={copyInvite} title="Copy meeting link">
@@ -659,9 +738,25 @@ export default function MeetingRoom() {
 
         <div className={`video-grid ${useTwoPersonLayout ? "video-grid-two-up" : "video-grid-pinned"}`}>
           {useTwoPersonLayout ? (
-            videoTiles.map((tile) => (
-              <VideoTile key={tile.id} tile={tile} isMain={videoTiles.length === 1} onPin={setPinnedTileId} />
-            ))
+            <>
+              {videoTiles.map((tile) => (
+                <VideoTile key={tile.id} tile={tile} isMain={videoTiles.length === 1} onPin={setPinnedTileId} />
+              ))}
+              {!hasRemoteParticipants && (
+                <div className="meeting-waiting-panel">
+                  <strong>Waiting for others to join</strong>
+                  <p>Share this meeting link from another phone, laptop, or browser profile to see the full Zoom-style multi-person call.</p>
+                  <div className="meeting-waiting-actions">
+                    <button className="secondary-button" type="button" onClick={copyInvite}>
+                      {copied ? <Check size={18} /> : <Copy size={18} />} Copy link
+                    </button>
+                    <button className="primary-button" type="button" onClick={shareInvite}>
+                      <Share2 size={18} /> Share
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <>
               <VideoTile tile={pinnedTile} isMain isPinned onPin={setPinnedTileId} />
@@ -876,6 +971,14 @@ function StreamVideo({ stream, muted = false }) {
 
 function VideoTile({ tile, isMain = false, isPinned = false, onPin }) {
   const label = `${tile.name || "Guest"}${tile.isLocal ? " (You)" : ""}`;
+  const connectionLabel = {
+    connected: "Connected",
+    connecting: "Connecting media",
+    checking: "Connecting media",
+    disconnected: "Reconnecting",
+    failed: "Media connection failed",
+    closed: "Disconnected",
+  }[tile.connectionState] || "Connecting media";
 
   return (
     <article
@@ -886,7 +989,9 @@ function VideoTile({ tile, isMain = false, isPinned = false, onPin }) {
       {tile.stream && tile.videoEnabled !== false ? (
         <StreamVideo stream={tile.stream} muted={tile.isLocal} />
       ) : (
-        <div className="video-placeholder">{tile.videoEnabled === false ? "Camera off" : "Connecting..."}</div>
+        <div className="video-placeholder">
+          <span>{tile.videoEnabled === false ? "Camera off" : tile.isLocal ? "Starting camera..." : connectionLabel}</span>
+        </div>
       )}
       {tile.handRaised && <b className="tile-badge">Hand raised</b>}
       <div className="tile-status-icons" aria-label="Participant media status">

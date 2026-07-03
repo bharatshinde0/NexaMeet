@@ -93,7 +93,7 @@ export const connectToSocketIO = (server, options = {}) => {
       );
 
       const participantList = [...room.values()];
-      socket.emit("room-users", participantList);
+      io.to(currentMeetingCode).emit("room-users", participantList);
       socket.to(currentMeetingCode).emit("user-joined", socket.id, participantList);
       socket.to(currentMeetingCode).emit("participant-joined", participant);
 
