@@ -45,6 +45,7 @@ const buildIceServers = () => {
 const iceServers = buildIceServers();
 
 const canUseMediaDevices = () => Boolean(navigator.mediaDevices?.getUserMedia);
+const cameraConstraints = (facingMode = "user") => ({ facingMode: { ideal: facingMode } });
 
 const blockedMediaNames = new Set(["NotAllowedError", "SecurityError", "PermissionDeniedError"]);
 const mediaPermissionSteps = [
@@ -182,6 +183,7 @@ export default function MeetingRoom() {
   const [activeTab, setActiveTab] = useState("chat");
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
+  const [cameraFacingMode, setCameraFacingMode] = useState("user");
   const [sharingScreen, setSharingScreen] = useState(false);
   const [handRaised, setHandRaised] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -265,6 +267,7 @@ export default function MeetingRoom() {
       handRaised,
       videoEnabled,
       softFocus: blurEnabled,
+      isMirrored: cameraFacingMode === "user",
       mediaIssue,
       mediaBusy,
     },
@@ -425,7 +428,8 @@ export default function MeetingRoom() {
     setMediaBusy(true);
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ video: cameraConstraints("user"), audio: true });
+      setCameraFacingMode("user");
       setMediaIssue(null);
     } catch (mediaError) {
       setAudioEnabled(false);
@@ -437,7 +441,7 @@ export default function MeetingRoom() {
           try {
             const partialStream = await navigator.mediaDevices.getUserMedia({
               audio: kind === "audio",
-              video: kind === "video",
+              video: kind === "video" ? cameraConstraints("user") : false,
             });
             partialStream.getTracks().forEach((track) => stream.addTrack(track));
           } catch {
@@ -711,34 +715,72 @@ export default function MeetingRoom() {
     });
   };
 
-  const toggleVideo = () => {
+  const switchCamera = async () => {
     if (!canUseMediaDevices()) {
       setMediaIssue(describeMediaProblem(null, "video"));
       return;
     }
 
     if (!localStreamRef.current?.getVideoTracks().length) {
-      requestMissingMediaTrack("video").catch((err) =>
+      requestMissingMediaTrack("video", cameraFacingMode).catch((err) =>
         setMediaIssue(describeMediaProblem(err, "video"))
       );
       return;
     }
 
-    localStreamRef.current?.getVideoTracks().forEach((track) => {
-      track.enabled = !track.enabled;
-      setVideoEnabled(track.enabled);
-      emitParticipantState({ audioEnabled, videoEnabled: track.enabled, handRaised });
-    });
+    const nextFacingMode = cameraFacingMode === "user" ? "environment" : "user";
+    setMediaBusy(true);
+
+    try {
+      const nextStream = await navigator.mediaDevices.getUserMedia({ video: cameraConstraints(nextFacingMode), audio: false });
+      const [nextTrack] = nextStream.getVideoTracks();
+
+      if (!nextTrack) {
+        throw new Error("Camera did not return a media track.");
+      }
+
+      const currentStream = localStreamRef.current || new MediaStream();
+      const currentVideoTrack = currentStream.getVideoTracks()[0];
+
+      peersRef.current.forEach((peer) => {
+        const sender = peer.getSenders().find((item) => item.track === currentVideoTrack);
+        sender?.replaceTrack(nextTrack);
+      });
+
+      if (currentVideoTrack) {
+        currentStream.removeTrack(currentVideoTrack);
+        currentVideoTrack.stop();
+      }
+
+      currentStream.addTrack(nextTrack);
+      localStreamRef.current = currentStream;
+      setLocalStream(new MediaStream(currentStream.getTracks()));
+      setCameraFacingMode(nextTrack.getSettings?.().facingMode || nextFacingMode);
+      setVideoEnabled(true);
+      emitParticipantState({ audioEnabled, videoEnabled: true, handRaised });
+      setMediaIssue(null);
+      setError("");
+    } catch (err) {
+      setMediaIssue({
+        ...describeMediaProblem(err, "video"),
+        detail:
+          nextFacingMode === "environment"
+            ? "Back camera is not available on this device/browser. Front camera is still active."
+            : "Front camera could not start. Check camera permission and try again.",
+      });
+    } finally {
+      setMediaBusy(false);
+    }
   };
 
-  const requestMissingMediaTrack = async (kind) => {
+  const requestMissingMediaTrack = async (kind, facingMode = cameraFacingMode) => {
     setMediaBusy(true);
     let nextStream;
 
     try {
       nextStream = await navigator.mediaDevices.getUserMedia({
         audio: kind === "audio",
-        video: kind === "video",
+        video: kind === "video" ? cameraConstraints(facingMode) : false,
       });
     } catch (err) {
       setMediaIssue(describeMediaProblem(err, kind));
@@ -768,6 +810,7 @@ export default function MeetingRoom() {
       setAudioEnabled(true);
       emitParticipantState({ audioEnabled: true, videoEnabled, handRaised });
     } else {
+      setCameraFacingMode(track.getSettings?.().facingMode || facingMode);
       setVideoEnabled(true);
       emitParticipantState({ audioEnabled, videoEnabled: true, handRaised });
     }
@@ -1155,7 +1198,12 @@ export default function MeetingRoom() {
           <button className="icon-button" onClick={toggleAudio} type="button" title={audioEnabled ? "Mute mic" : "Unmute mic"}>
             {audioEnabled ? <Mic size={21} /> : <MicOff size={21} />}
           </button>
-          <button className="icon-button" onClick={toggleVideo} type="button" title={videoEnabled ? "Turn camera off" : "Turn camera on"}>
+          <button
+            className="icon-button"
+            onClick={switchCamera}
+            type="button"
+            title={videoEnabled ? `Switch to ${cameraFacingMode === "user" ? "back" : "front"} camera` : "Turn camera on"}
+          >
             {videoEnabled ? <Camera size={21} /> : <CameraOff size={21} />}
           </button>
           <button className={`icon-button ${handRaised ? "active-control" : ""}`} onClick={toggleHand} type="button" title="Raise hand">
@@ -1331,7 +1379,7 @@ function VideoTile({ tile, isMain = false, isPinned = false, onPin, onRetryAudio
 
   return (
     <article
-      className={`video-tile ${tile.isLocal && !tile.isScreen ? "local" : ""} ${tile.isScreen ? "screen-share-tile" : ""} ${tile.softFocus ? "soft-focus" : ""} ${
+      className={`video-tile ${tile.isLocal && !tile.isScreen ? "local" : ""} ${tile.isMirrored ? "mirrored" : ""} ${tile.isScreen ? "screen-share-tile" : ""} ${tile.softFocus ? "soft-focus" : ""} ${
         isMain ? "main-video-tile" : "mini-video-tile"
       }`}
     >

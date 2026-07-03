@@ -1019,7 +1019,7 @@ p {
   flex-wrap: wrap;
 }
 
-.video-tile.local video {
+.video-tile.mirrored video {
   transform: scaleX(-1);
 }
 
@@ -1043,10 +1043,12 @@ p {
   left: 12px;
   bottom: 12px;
   right: 12px;
+  z-index: 16;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  pointer-events: none;
 }
 
 .tile-footer span {
@@ -1061,11 +1063,15 @@ p {
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+  pointer-events: auto;
 }
 
 .tile-pin {
   flex: 0 0 auto;
-  min-height: 32px;
+  position: relative;
+  z-index: 17;
+  min-width: 74px;
+  min-height: 36px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1076,6 +1082,8 @@ p {
   background: rgba(15, 23, 42, 0.68);
   font-size: 0.78rem;
   font-weight: 800;
+  pointer-events: auto;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
 }
 
 .tile-pin.active,
@@ -1111,8 +1119,10 @@ p {
   position: absolute;
   top: 12px;
   right: 12px;
+  z-index: 13;
   display: flex;
   gap: 6px;
+  pointer-events: none;
 }
 
 .tile-status-icons span {
@@ -1770,6 +1780,7 @@ p {
 
   .tile-pin {
     min-height: 30px;
+    min-width: 62px;
     padding: 0 8px;
   }
 
