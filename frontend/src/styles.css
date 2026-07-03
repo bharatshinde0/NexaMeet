@@ -1023,6 +1023,17 @@ p {
   transform: scaleX(-1);
 }
 
+.video-tile.screen-share-tile video {
+  object-fit: contain;
+  background: #050a12;
+}
+
+.video-tile.screen-share-tile .video-placeholder {
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(15, 118, 110, 0.18)),
+    #080d16;
+}
+
 .video-tile.soft-focus video {
   filter: blur(3px) saturate(1.08);
 }

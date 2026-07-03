@@ -154,10 +154,12 @@ export default function MeetingRoom() {
   const { token, user } = useAuth();
   const localVideoRef = useRef(null);
   const localStreamRef = useRef(null);
+  const screenStreamRef = useRef(null);
   const socketRef = useRef(null);
   const peersRef = useRef(new Map());
   const offeredPeersRef = useRef(new Set());
   const pendingCandidatesRef = useRef(new Map());
+  const screenStreamIdsRef = useRef(new Map());
   const mediaRecorderRef = useRef(null);
   const recordingChunksRef = useRef([]);
   const recognitionRef = useRef(null);
@@ -167,6 +169,7 @@ export default function MeetingRoom() {
   const [remoteStreams, setRemoteStreams] = useState([]);
   const [peerStates, setPeerStates] = useState({});
   const [localStream, setLocalStream] = useState(null);
+  const [localScreenStream, setLocalScreenStream] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
   const [summaries, setSummaries] = useState([]);
@@ -217,9 +220,41 @@ export default function MeetingRoom() {
       handRaised: participant?.handRaised,
       videoEnabled: participant?.videoEnabled,
       participant,
-      stream: remoteStreams.find((item) => item.socketId === participant.socketId)?.stream || null,
+      stream: remoteStreams.find((item) => item.socketId === participant.socketId && item.type !== "screen")?.stream || null,
       connectionState: peerStates[participant.socketId] || "connecting",
     }));
+  const screenTiles = [
+    ...(localScreenStream
+      ? [
+          {
+            id: "local-screen",
+            name: `${user?.name || "You"}'s screen`,
+            isLocal: true,
+            isScreen: true,
+            stream: localScreenStream,
+            audioEnabled: false,
+            videoEnabled: true,
+            connectionState: "connected",
+          },
+        ]
+      : []),
+    ...remoteStreams
+      .filter((item) => item.type === "screen")
+      .map((item) => {
+        const participant = participantBySocket.get(item.socketId);
+
+        return {
+          id: `${item.socketId}-screen`,
+          name: `${participant?.name || "Guest"}'s screen`,
+          isLocal: false,
+          isScreen: true,
+          stream: item.stream,
+          audioEnabled: participant?.audioEnabled,
+          videoEnabled: true,
+          connectionState: peerStates[item.socketId] || "connecting",
+        };
+      }),
+  ];
   const videoTiles = [
     {
       id: "local",
@@ -234,6 +269,7 @@ export default function MeetingRoom() {
       mediaBusy,
     },
     ...remoteTiles,
+    ...screenTiles,
   ];
   const useTwoPersonLayout = videoTiles.length <= 2;
   const pinnedTile = videoTiles.find((tile) => tile.id === pinnedTileId) || videoTiles[0];
@@ -283,10 +319,11 @@ export default function MeetingRoom() {
     }
   }, []);
 
-  const sendOffer = useCallback(async (socketId) => {
+  const sendOffer = useCallback(async (socketId, options = {}) => {
     const peer = peersRef.current.get(socketId);
+    const force = Boolean(options.force);
 
-    if (!peer || peer.signalingState !== "stable" || offeredPeersRef.current.has(socketId)) {
+    if (!peer || peer.signalingState !== "stable" || (!force && offeredPeersRef.current.has(socketId))) {
       return;
     }
 
@@ -318,6 +355,9 @@ export default function MeetingRoom() {
       localStreamRef.current?.getTracks().forEach((track) => {
         peer.addTrack(track, localStreamRef.current);
       });
+      screenStreamRef.current?.getTracks().forEach((track) => {
+        peer.addTrack(track, screenStreamRef.current);
+      });
 
       peer.onicecandidate = (event) => {
         if (event.candidate) {
@@ -331,11 +371,17 @@ export default function MeetingRoom() {
         setPeerState(socketId, "connected");
 
         setRemoteStreams((current) => {
-          const existing = current.find((item) => item.socketId === socketId);
+          const knownScreenStreamId = screenStreamIdsRef.current.get(socketId);
+          const type =
+            knownScreenStreamId === stream.id ||
+            (!knownScreenStreamId && current.some((item) => item.socketId === socketId && item.streamId !== stream.id))
+              ? "screen"
+              : "camera";
+          const existing = current.find((item) => item.socketId === socketId && item.streamId === stream.id);
           if (existing) {
-            return current.map((item) => (item.socketId === socketId ? { ...item, stream } : item));
+            return current.map((item) => (item.socketId === socketId && item.streamId === stream.id ? { ...item, stream, type } : item));
           }
-          return [...current, { socketId, stream }];
+          return [...current, { socketId, streamId: stream.id, stream, type }];
         });
       };
 
@@ -496,6 +542,19 @@ export default function MeetingRoom() {
         });
 
         socket.on("room-users", async (roomUsers) => {
+          roomUsers.forEach((participant) => {
+            if (participant.screenSharing && participant.screenStreamId) {
+              screenStreamIdsRef.current.set(participant.socketId, participant.screenStreamId);
+            } else {
+              screenStreamIdsRef.current.delete(participant.socketId);
+            }
+          });
+          setRemoteStreams((current) =>
+            current.map((item) => ({
+              ...item,
+              type: screenStreamIdsRef.current.get(item.socketId) === item.streamId ? "screen" : item.type === "screen" ? "camera" : item.type,
+            }))
+          );
           setParticipants(roomUsers);
           for (const participant of roomUsers) {
             if (participant.socketId !== socket.id) {
@@ -517,10 +576,30 @@ export default function MeetingRoom() {
 
         socket.on("participant-left", (participant) => {
           setParticipants((current) => current.filter((item) => item.socketId !== participant.socketId));
+          screenStreamIdsRef.current.delete(participant.socketId);
           removePeer(participant.socketId);
         });
 
         socket.on("user-left", removePeer);
+
+        socket.on("screen-share-state", ({ socketId, sharing, streamId }) => {
+          if (!socketId || socketId === socket.id) {
+            return;
+          }
+
+          if (sharing && streamId) {
+            screenStreamIdsRef.current.set(socketId, streamId);
+            setRemoteStreams((current) =>
+              current.map((item) =>
+                item.socketId === socketId && item.streamId === streamId ? { ...item, type: "screen" } : item
+              )
+            );
+            return;
+          }
+
+          screenStreamIdsRef.current.delete(socketId);
+          setRemoteStreams((current) => current.filter((item) => !(item.socketId === socketId && item.type === "screen")));
+        });
 
         socket.on("webrtc-offer", async ({ from, offer }) => {
           const peer = await createPeer(from, false);
@@ -604,7 +683,10 @@ export default function MeetingRoom() {
       peersRef.current.clear();
       offeredPeersRef.current.clear();
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
+      screenStreamRef.current?.getTracks().forEach((track) => track.stop());
+      screenStreamRef.current = null;
       setLocalStream(null);
+      setLocalScreenStream(null);
       setPeerStates({});
     };
   }, [createPeer, inviteToken, navigate, removePeer, routeCode, token, user]);
@@ -700,27 +782,39 @@ export default function MeetingRoom() {
     emitParticipantState({ audioEnabled, videoEnabled, handRaised: nextHandRaised });
   };
 
-  const replaceVideoTrack = async (nextTrack) => {
-    peersRef.current.forEach((peer) => {
-      const sender = peer.getSenders().find((item) => item.track?.kind === "video");
-      sender?.replaceTrack(nextTrack);
+  const stopScreenShare = async ({ stopTracks = true } = {}) => {
+    const screenStream = screenStreamRef.current;
+    const screenTracks = screenStream?.getTracks() || [];
+
+    if (screenTracks.length === 0) {
+      setSharingScreen(false);
+      setLocalScreenStream(null);
+      return;
+    }
+
+    peersRef.current.forEach((peer, socketId) => {
+      peer
+        .getSenders()
+        .filter((sender) => sender.track && screenTracks.includes(sender.track))
+        .forEach((sender) => peer.removeTrack(sender));
+      sendOffer(socketId, { force: true }).catch(() => {});
     });
 
-    const currentVideoTrack = localStreamRef.current?.getVideoTracks()[0];
-    if (currentVideoTrack) {
-      localStreamRef.current.removeTrack(currentVideoTrack);
-      currentVideoTrack.stop();
+    if (stopTracks) {
+      screenTracks.forEach((track) => track.stop());
     }
 
-    localStreamRef.current?.addTrack(nextTrack);
-    setLocalStream(new MediaStream(localStreamRef.current?.getTracks() || []));
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = localStreamRef.current;
-    }
+    socketRef.current?.emit("screen-share-state", { sharing: false, streamId: screenStream.id });
+    screenStreamRef.current = null;
+    setLocalScreenStream(null);
+    setSharingScreen(false);
   };
 
   const shareScreen = async () => {
-    if (sharingScreen) return;
+    if (sharingScreen) {
+      await stopScreenShare();
+      return;
+    }
 
     try {
       if (!window.isSecureContext || !navigator.mediaDevices?.getDisplayMedia) {
@@ -735,24 +829,19 @@ export default function MeetingRoom() {
         throw new Error("No screen track was selected.");
       }
 
-      await replaceVideoTrack(screenTrack);
+      screenStreamRef.current = screenStream;
+      setLocalScreenStream(screenStream);
+      peersRef.current.forEach((peer, socketId) => {
+        peer.addTrack(screenTrack, screenStream);
+        sendOffer(socketId, { force: true }).catch(() => {});
+      });
+      socketRef.current?.emit("screen-share-state", { sharing: true, streamId: screenStream.id });
       setSharingScreen(true);
+      setPinnedTileId("local-screen");
       setError("");
 
       screenTrack.onended = async () => {
-        if (!canUseMediaDevices()) {
-          setSharingScreen(false);
-          return;
-        }
-
-        try {
-          const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          await replaceVideoTrack(cameraStream.getVideoTracks()[0]);
-        } catch (mediaError) {
-          setMediaIssue(describeMediaProblem(mediaError, "video"));
-        } finally {
-          setSharingScreen(false);
-        }
+        await stopScreenShare({ stopTracks: false });
       };
     } catch (err) {
       setSharingScreen(false);
@@ -892,6 +981,7 @@ export default function MeetingRoom() {
 
     const mixedStream = new MediaStream();
     localStreamRef.current?.getTracks().forEach((track) => mixedStream.addTrack(track));
+    localScreenStream?.getTracks().forEach((track) => mixedStream.addTrack(track));
     remoteStreams.forEach((item) => item.stream.getTracks().forEach((track) => mixedStream.addTrack(track)));
 
     recordingChunksRef.current = [];
@@ -929,8 +1019,11 @@ export default function MeetingRoom() {
     offeredPeersRef.current.clear();
     pendingCandidatesRef.current.clear();
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    screenStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
+    screenStreamRef.current = null;
     setLocalStream(null);
+    setLocalScreenStream(null);
     setRemoteStreams([]);
     setParticipants([]);
     setPeerStates({});
@@ -1068,7 +1161,7 @@ export default function MeetingRoom() {
           <button className={`icon-button ${handRaised ? "active-control" : ""}`} onClick={toggleHand} type="button" title="Raise hand">
             <Hand size={21} />
           </button>
-          <button className="icon-button" onClick={shareScreen} type="button" title="Share screen">
+          <button className={`icon-button ${sharingScreen ? "active-control" : ""}`} onClick={shareScreen} type="button" title={sharingScreen ? "Stop sharing" : "Share screen"}>
             <MonitorUp size={21} />
           </button>
           <button className={`icon-button ${captionsEnabled ? "active-control" : ""}`} onClick={toggleCaptions} type="button" title="Live captions">
@@ -1226,7 +1319,7 @@ function StreamVideo({ stream, muted = false }) {
 }
 
 function VideoTile({ tile, isMain = false, isPinned = false, onPin, onRetryAudio, onRetryVideo }) {
-  const label = `${tile.name || "Guest"}${tile.isLocal ? " (You)" : ""}`;
+  const label = tile.isScreen ? tile.name || "Shared screen" : `${tile.name || "Guest"}${tile.isLocal ? " (You)" : ""}`;
   const connectionLabel = {
     connected: "Connected",
     connecting: "Connecting media",
@@ -1238,7 +1331,7 @@ function VideoTile({ tile, isMain = false, isPinned = false, onPin, onRetryAudio
 
   return (
     <article
-      className={`video-tile ${tile.isLocal ? "local" : ""} ${tile.softFocus ? "soft-focus" : ""} ${
+      className={`video-tile ${tile.isLocal && !tile.isScreen ? "local" : ""} ${tile.isScreen ? "screen-share-tile" : ""} ${tile.softFocus ? "soft-focus" : ""} ${
         isMain ? "main-video-tile" : "mini-video-tile"
       }`}
     >
@@ -1273,8 +1366,8 @@ function VideoTile({ tile, isMain = false, isPinned = false, onPin, onRetryAudio
           )}
         </div>
       )}
-      {tile.handRaised && <b className="tile-badge">Hand raised</b>}
-      <div className="tile-status-icons" aria-label="Participant media status">
+      {(tile.handRaised || tile.isScreen) && <b className="tile-badge">{tile.isScreen ? "Presenting" : "Hand raised"}</b>}
+      {!tile.isScreen && <div className="tile-status-icons" aria-label="Participant media status">
         <span className={tile.audioEnabled === false ? "off" : ""} title={tile.audioEnabled === false ? "Mic off" : "Mic on"}>
           {tile.audioEnabled === false ? <MicOff size={15} /> : <Mic size={15} />}
         </span>
@@ -1286,7 +1379,7 @@ function VideoTile({ tile, isMain = false, isPinned = false, onPin, onRetryAudio
             <Hand size={15} />
           </span>
         )}
-      </div>
+      </div>}
       <div className="tile-footer">
         <span>{label}</span>
         <button className={`tile-pin ${isPinned ? "active" : ""}`} type="button" onClick={() => onPin(tile.id)} title="Pin video">

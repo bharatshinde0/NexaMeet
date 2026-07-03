@@ -69,6 +69,8 @@ export const connectToSocketIO = (server, options = {}) => {
         name: authenticatedUser?.name || joinData.name,
         audioEnabled: true,
         videoEnabled: true,
+        screenSharing: false,
+        screenStreamId: null,
         handRaised: false,
         joinedAt: new Date().toISOString(),
       };
@@ -182,9 +184,39 @@ export const connectToSocketIO = (server, options = {}) => {
         ...(typeof state.audioEnabled === "boolean" ? { audioEnabled: state.audioEnabled } : {}),
         ...(typeof state.videoEnabled === "boolean" ? { videoEnabled: state.videoEnabled } : {}),
         ...(typeof state.handRaised === "boolean" ? { handRaised: state.handRaised } : {}),
+        ...(typeof state.screenSharing === "boolean" ? { screenSharing: state.screenSharing } : {}),
+        ...(typeof state.screenStreamId === "string" || state.screenStreamId === null ? { screenStreamId: state.screenStreamId } : {}),
       };
 
       room.set(socket.id, nextParticipant);
+      io.to(currentMeetingCode).emit("room-users", [...room.values()]);
+    });
+
+    socket.on("screen-share-state", (state = {}) => {
+      if (!currentMeetingCode || !rooms.has(currentMeetingCode)) {
+        return;
+      }
+
+      const room = rooms.get(currentMeetingCode);
+      const participant = room.get(socket.id);
+
+      if (!participant) {
+        return;
+      }
+
+      const nextParticipant = {
+        ...participant,
+        screenSharing: Boolean(state.sharing),
+        screenStreamId: state.sharing ? String(state.streamId || "") : null,
+      };
+
+      room.set(socket.id, nextParticipant);
+      io.to(currentMeetingCode).emit("screen-share-state", {
+        socketId: socket.id,
+        name: participant.name,
+        sharing: nextParticipant.screenSharing,
+        streamId: nextParticipant.screenStreamId,
+      });
       io.to(currentMeetingCode).emit("room-users", [...room.values()]);
     });
 
