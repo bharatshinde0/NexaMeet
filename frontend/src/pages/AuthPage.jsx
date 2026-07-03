@@ -5,6 +5,26 @@ import { useAuth } from "../state/AuthContext.jsx";
 
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
+const authErrorMessage = (err) => {
+  if (err.code === "ECONNABORTED") {
+    return "Server took too long to respond. If this is Render free hosting, wait a minute for the backend to wake up and try again.";
+  }
+
+  if (err.message === "Network Error") {
+    return "Could not reach the backend. Check VITE_API_URL on the frontend and CLIENT_URL/CORS on the backend.";
+  }
+
+  if (err.response?.data?.message) {
+    return err.response.data.message;
+  }
+
+  if (err.response?.status) {
+    return `Authentication failed. Server returned ${err.response.status}. Check the backend logs on Render.`;
+  }
+
+  return err.message || "Authentication failed";
+};
+
 export default function AuthPage() {
   const { login, register, googleLogin } = useAuth();
   const googleButtonRef = useRef(null);
@@ -77,7 +97,12 @@ export default function AuthPage() {
       }
 
       if (mode === "register") {
-        await register(form);
+        await register({
+          name: form.name.trim(),
+          username: form.username.trim(),
+          email: form.email.trim() || undefined,
+          password: form.password,
+        });
       }
 
       if (mode === "forgot") {
@@ -102,7 +127,7 @@ export default function AuthPage() {
         setMode("login");
       }
     } catch (err) {
-      setError(err.response?.data?.message || "Authentication failed");
+      setError(authErrorMessage(err));
     } finally {
       setLoading(false);
     }

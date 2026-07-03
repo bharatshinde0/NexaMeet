@@ -66,8 +66,9 @@ export const register = asyncHandler(async (req, res) => {
   }
 
   const normalizedUsername = String(username).toLowerCase().trim();
+  const normalizedEmail = email ? String(email).toLowerCase().trim() : undefined;
   const existingUser = await User.findOne({
-    $or: [{ username: normalizedUsername }, ...(email ? [{ email: String(email).toLowerCase().trim() }] : [])],
+    $or: [{ username: normalizedUsername }, ...(normalizedEmail ? [{ email: normalizedEmail }] : [])],
   });
 
   if (existingUser) {
@@ -78,7 +79,7 @@ export const register = asyncHandler(async (req, res) => {
   const user = await User.create({
     name,
     username: normalizedUsername,
-    email,
+    ...(normalizedEmail ? { email: normalizedEmail } : {}),
     password: hashedPassword,
     avatarColor: `#${crypto.randomBytes(3).toString("hex")}`,
   });
