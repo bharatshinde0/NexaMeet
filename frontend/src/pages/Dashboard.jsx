@@ -86,7 +86,8 @@ export default function Dashboard() {
     }
   };
 
-  const meetingUrl = (meeting) => `${window.location.origin}/meeting/${meeting.code}`;
+  const meetingUrl = (meeting) =>
+    meeting.inviteToken ? `${window.location.origin}/join/${meeting.inviteToken}` : `${window.location.origin}/meeting/${meeting.code}`;
 
   const copyMeeting = async (meeting) => {
     await navigator.clipboard?.writeText(meetingUrl(meeting));
@@ -97,7 +98,7 @@ export default function Dashboard() {
   const shareMeeting = async (meeting) => {
     const shareData = {
       title: meeting.title,
-      text: `Join my NexaMeet meeting: ${meeting.code}`,
+      text: `Join my NexaMeet meeting: ${meeting.title}`,
       url: meetingUrl(meeting),
     };
 
@@ -262,7 +263,7 @@ export default function Dashboard() {
                         <Clock size={14} /> {formatDateTime(meeting.scheduledAt)}
                       </small>
                       <small>
-                        <Link size={14} /> {meeting.code}
+                        <Link size={14} /> {meeting.code || "Private invite link"}
                       </small>
                     </span>
                   </button>

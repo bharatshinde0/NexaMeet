@@ -42,6 +42,12 @@ const meetingSchema = new Schema(
       uppercase: true,
       index: true,
     },
+    inviteToken: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
     title: {
       type: String,
       required: true,
@@ -64,6 +70,10 @@ const meetingSchema = new Schema(
     },
     endedAt: {
       type: Date,
+    },
+    expiresAt: {
+      type: Date,
+      index: true,
     },
     participants: [participantSchema],
     settings: {

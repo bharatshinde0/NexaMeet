@@ -184,7 +184,7 @@ export default function AuthPage() {
         {mode === "register" && (
           <>
             <label>
-              Name
+              Display name
               <input name="name" value={form.name} onChange={updateField} autoComplete="name" required />
             </label>
             <label>
@@ -197,7 +197,7 @@ export default function AuthPage() {
         {(mode === "login" || mode === "register") && (
           <>
             <label>
-              Username
+              Unique username
               <input name="username" value={form.username} onChange={updateField} autoComplete="username" required />
             </label>
             <label>

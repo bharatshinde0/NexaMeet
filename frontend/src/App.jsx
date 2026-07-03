@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AuthPage from "./pages/AuthPage.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import MeetingRoom from "./pages/MeetingRoom.jsx";
+import { readActiveMeeting } from "./lib/meetingSession.js";
 import { useAuth } from "./state/AuthContext.jsx";
 
 const ProtectedRoute = ({ children }) => {
@@ -12,6 +13,7 @@ const ProtectedRoute = ({ children }) => {
 
 export default function App() {
   const { token } = useAuth();
+  const activeMeeting = token ? readActiveMeeting() : null;
 
   return (
     <Routes>
@@ -20,12 +22,20 @@ export default function App() {
         path="/"
         element={
           <ProtectedRoute>
-            <Dashboard />
+            {activeMeeting ? <Navigate to={activeMeeting.path || `/meeting/${activeMeeting.code}`} replace /> : <Dashboard />}
           </ProtectedRoute>
         }
       />
       <Route
         path="/meeting/:code"
+        element={
+          <ProtectedRoute>
+            <MeetingRoom />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/join/:inviteToken"
         element={
           <ProtectedRoute>
             <MeetingRoom />

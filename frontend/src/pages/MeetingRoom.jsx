@@ -23,6 +23,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { api } from "../lib/api.js";
+import { clearActiveMeeting, saveActiveMeeting } from "../lib/meetingSession.js";
 import { createSocket } from "../lib/socket.js";
 import { useAuth } from "../state/AuthContext.jsx";
 
@@ -42,7 +43,7 @@ const buildIceServers = () => {
 
 const iceServers = buildIceServers();
 const insecureLanMediaMessage =
-  "Camera and microphone need HTTPS when opening NexaMeet from another device. You can still join chat/details, but video needs HTTPS or localhost.";
+  "Camera and microphone need a secure browser permission. If this is HTTPS, close floating bubbles/overlays, allow camera and microphone in site settings, then tap the camera button again.";
 
 const canUseMediaDevices = () => Boolean(navigator.mediaDevices?.getUserMedia);
 
@@ -73,7 +74,7 @@ const mergeMessages = (currentMessages, incomingMessages) => {
 const reactionChoices = ["👍", "👏", "🎉", "❤️", "😂"];
 
 export default function MeetingRoom() {
-  const { code } = useParams();
+  const { code: routeCode, inviteToken } = useParams();
   const navigate = useNavigate();
   const { token, user } = useAuth();
   const localVideoRef = useRef(null);
@@ -112,7 +113,12 @@ export default function MeetingRoom() {
   const [pinnedTileId, setPinnedTileId] = useState("local");
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
 
-  const meetingUrl = `${window.location.origin}/meeting/${code}`;
+  const meetingCode = meeting?.roomCode || routeCode;
+  const meetingUrl = meeting?.inviteToken
+    ? `${window.location.origin}/join/${meeting.inviteToken}`
+    : routeCode
+      ? `${window.location.origin}/meeting/${routeCode}`
+      : window.location.href;
   const participantBySocket = new Map(participants.map((participant) => [participant.socketId, participant]));
   const isOwnMessage = (message) => {
     const senderId = message.sender?._id || message.sender;
@@ -155,10 +161,12 @@ export default function MeetingRoom() {
   const sideTiles = videoTiles.filter((tile) => tile.id !== pinnedTile.id);
   const hasRemoteParticipants = remoteTiles.length > 0;
 
-  const refreshMessages = useCallback(async () => {
-    const { data } = await api.get(`/messages/${code}?limit=1000`);
+  const refreshMessages = useCallback(async (targetCode = meetingCode) => {
+    if (!targetCode) return;
+
+    const { data } = await api.get(`/messages/${targetCode}?limit=1000`);
     setMessages((current) => mergeMessages(current, data.messages));
-  }, [code]);
+  }, [meetingCode]);
 
   const removePeer = useCallback((socketId) => {
     const peer = peersRef.current.get(socketId);
@@ -293,26 +301,49 @@ export default function MeetingRoom() {
 
   useEffect(() => {
     let active = true;
+    saveActiveMeeting(inviteToken || routeCode, inviteToken ? "join" : "meeting");
 
     const boot = async () => {
       try {
-        const [{ data: meetingData }, { data: messageData }, { data: summaryData }] = await Promise.all([
-          api.get(`/meetings/${code}`),
-          api.get(`/messages/${code}?limit=1000`),
-          api.get(`/summaries/${code}`),
-        ]);
+        const { data: meetingData } = await api.get(
+          inviteToken ? `/meetings/invite/${inviteToken}` : `/meetings/${routeCode}`
+        );
 
         if (!active) return;
 
-        setMeeting(meetingData.meeting);
+        const activeMeeting = meetingData.meeting;
+
+        if (routeCode && !activeMeeting.canManage && activeMeeting.inviteToken) {
+          saveActiveMeeting(activeMeeting.inviteToken, "join");
+          navigate(`/join/${activeMeeting.inviteToken}`, { replace: true });
+          return;
+        }
+
+        const activeMeetingCode = activeMeeting.roomCode || routeCode;
+        const [{ data: messageData }, { data: summaryData }] = await Promise.all([
+          api.get(`/messages/${activeMeetingCode}?limit=1000`),
+          api.get(`/summaries/${activeMeetingCode}`),
+        ]);
+
+        setMeeting(activeMeeting);
         setMessages((current) => mergeMessages(current, messageData.messages));
         setSummaries(summaryData.summaries);
-        await api.patch(`/meetings/${code}/start`);
+        await api.patch(`/meetings/${activeMeetingCode}/start`);
 
         let stream = new MediaStream();
 
         if (canUseMediaDevices()) {
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          } catch (mediaError) {
+            setAudioEnabled(false);
+            setVideoEnabled(false);
+            setError(
+              mediaError.name === "NotAllowedError" || mediaError.name === "SecurityError"
+                ? "Camera permission was blocked. Close screen overlays/bubbles, allow camera and microphone in the browser, then tap the camera button again."
+                : mediaError.message || "Camera or microphone could not start on this device."
+            );
+          }
         } else {
           setAudioEnabled(false);
           setVideoEnabled(false);
@@ -331,7 +362,7 @@ export default function MeetingRoom() {
 
         socket.on("connect", () => {
           setSocketStatus("connected");
-          socket.emit("join-call", { meetingCode: code, name: user?.name, userId: user?.id });
+          socket.emit("join-call", { meetingCode: activeMeetingCode, name: user?.name, userId: user?.id });
           socket.emit("participant-state", {
             audioEnabled: stream.getAudioTracks().some((track) => track.enabled),
             videoEnabled: stream.getVideoTracks().some((track) => track.enabled),
@@ -436,6 +467,12 @@ export default function MeetingRoom() {
         socket.on("socket-error", (payload) => setError(payload.message));
         socket.on("socket-warning", (payload) => setError(payload.message));
       } catch (err) {
+        if (err.response?.status === 404) {
+          clearActiveMeeting();
+          navigate("/", { replace: true });
+          return;
+        }
+
         setError(err.response?.data?.message || err.message || "Could not join meeting");
       }
     };
@@ -454,11 +491,18 @@ export default function MeetingRoom() {
       setLocalStream(null);
       setPeerStates({});
     };
-  }, [code, createPeer, removePeer, token, user]);
+  }, [createPeer, inviteToken, navigate, removePeer, routeCode, token, user]);
 
   const toggleAudio = () => {
-    if (!canUseMediaDevices() || !localStreamRef.current?.getAudioTracks().length) {
+    if (!canUseMediaDevices()) {
       setError(insecureLanMediaMessage);
+      return;
+    }
+
+    if (!localStreamRef.current?.getAudioTracks().length) {
+      requestMissingMediaTrack("audio").catch((err) =>
+        setError(err.message || "Microphone permission was blocked. Check browser permissions and try again.")
+      );
       return;
     }
 
@@ -470,8 +514,15 @@ export default function MeetingRoom() {
   };
 
   const toggleVideo = () => {
-    if (!canUseMediaDevices() || !localStreamRef.current?.getVideoTracks().length) {
+    if (!canUseMediaDevices()) {
       setError(insecureLanMediaMessage);
+      return;
+    }
+
+    if (!localStreamRef.current?.getVideoTracks().length) {
+      requestMissingMediaTrack("video").catch((err) =>
+        setError(err.message || "Camera permission was blocked. Check browser permissions and try again.")
+      );
       return;
     }
 
@@ -480,6 +531,37 @@ export default function MeetingRoom() {
       setVideoEnabled(track.enabled);
       emitParticipantState({ audioEnabled, videoEnabled: track.enabled, handRaised });
     });
+  };
+
+  const requestMissingMediaTrack = async (kind) => {
+    const nextStream = await navigator.mediaDevices.getUserMedia({
+      audio: kind === "audio",
+      video: kind === "video",
+    });
+    const [track] = kind === "audio" ? nextStream.getAudioTracks() : nextStream.getVideoTracks();
+
+    if (!track) {
+      throw new Error(`${kind === "audio" ? "Microphone" : "Camera"} did not return a media track.`);
+    }
+
+    const currentStream = localStreamRef.current || new MediaStream();
+    currentStream.addTrack(track);
+    localStreamRef.current = currentStream;
+    setLocalStream(new MediaStream(currentStream.getTracks()));
+
+    peersRef.current.forEach((peer) => {
+      peer.addTrack(track, currentStream);
+    });
+
+    if (kind === "audio") {
+      setAudioEnabled(true);
+      emitParticipantState({ audioEnabled: true, videoEnabled, handRaised });
+    } else {
+      setVideoEnabled(true);
+      emitParticipantState({ audioEnabled, videoEnabled: true, handRaised });
+    }
+
+    setError("");
   };
 
   const toggleHand = () => {
@@ -539,13 +621,13 @@ export default function MeetingRoom() {
   const sendMessage = async (event) => {
     event.preventDefault();
     const content = messageText.trim();
-    if (!content) return;
+    if (!content || !meetingCode) return;
 
     const clientId = `${socketRef.current?.id || "local"}-${Date.now()}`;
     const optimisticMessage = {
       _id: clientId,
       clientId,
-      meetingCode: code,
+      meetingCode,
       senderName: user?.name || "You",
       content,
       createdAt: new Date().toISOString(),
@@ -557,13 +639,13 @@ export default function MeetingRoom() {
     setMessageText("");
 
     try {
-      const { data } = await api.post(`/messages/${code}`, { content });
+      const { data } = await api.post(`/messages/${meetingCode}`, { content });
       const savedMessage = { ...data.message, clientId, isLocal: true };
 
       setMessages((current) => mergeMessages(current.filter((message) => message.clientId !== clientId), [savedMessage]));
       if (socketRef.current?.connected) {
         socketRef.current.emit("chat-message", {
-          meetingCode: code,
+          meetingCode,
           clientId,
           content,
           senderName: user?.name,
@@ -583,11 +665,11 @@ export default function MeetingRoom() {
   };
 
   const generateSummary = async () => {
-    if (generatingSummary) return;
+    if (generatingSummary || !meetingCode) return;
 
     try {
       setGeneratingSummary(true);
-      const { data } = await api.post(`/summaries/${code}/generate`, {});
+      const { data } = await api.post(`/summaries/${meetingCode}/generate`, {});
 
       if (!data?.summary) {
         throw new Error("Summary response was empty.");
@@ -611,7 +693,7 @@ export default function MeetingRoom() {
     if (navigator.share) {
       await navigator.share({
         title: meeting?.title || "NexaMeet meeting",
-        text: `Join meeting ${code}`,
+        text: `Join ${meeting?.title || "NexaMeet meeting"}`,
         url: meetingUrl,
       });
       return;
@@ -680,7 +762,7 @@ export default function MeetingRoom() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${code}-recording.webm`;
+      link.download = `${meetingCode || "nexameet"}-recording.webm`;
       link.click();
       URL.revokeObjectURL(url);
       setRecording(false);
@@ -695,6 +777,7 @@ export default function MeetingRoom() {
   };
 
   const leaveMeeting = async () => {
+    clearActiveMeeting();
     navigate("/");
   };
 
@@ -708,7 +791,7 @@ export default function MeetingRoom() {
       <section className="stage">
         <header className="meeting-header">
           <div>
-            <p className="eyebrow">Meeting code {code}</p>
+            <p className="eyebrow">{meeting?.canManage && meeting?.code ? `Meeting code ${meeting.code}` : "Private meeting"}</p>
             <h1>{meeting?.title || "Meeting"}</h1>
             <div className="meeting-live-meta">
               <span className={`live-dot ${socketStatus}`}></span>
@@ -896,7 +979,7 @@ export default function MeetingRoom() {
             <h2>Meeting details</h2>
             <label>
               Meeting ID
-              <input value={code} readOnly />
+              <input value={meeting?.canManage && meeting?.code ? meeting.code : "Hidden for invite participants"} readOnly />
             </label>
             <label>
               Invite link

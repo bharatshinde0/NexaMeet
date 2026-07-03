@@ -65,19 +65,37 @@ export const register = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: "Password must be at least 6 characters" });
   }
 
+  const displayName = String(name).trim();
   const normalizedUsername = String(username).toLowerCase().trim();
   const normalizedEmail = email ? String(email).toLowerCase().trim() : undefined;
-  const existingUser = await User.findOne({
-    $or: [{ username: normalizedUsername }, ...(normalizedEmail ? [{ email: normalizedEmail }] : [])],
-  });
 
-  if (existingUser) {
-    return res.status(409).json({ message: "Username or email already exists" });
+  if (!displayName) {
+    return res.status(400).json({ message: "Display name is required" });
+  }
+
+  if (!/^[a-z0-9_.-]{3,40}$/.test(normalizedUsername)) {
+    return res.status(400).json({
+      message: "Username must be 3-40 characters and can use lowercase letters, numbers, dots, underscores, or hyphens",
+    });
+  }
+
+  const existingUsername = await User.findOne({ username: normalizedUsername }).select("_id");
+
+  if (existingUsername) {
+    return res.status(409).json({ message: "Username already exists. Choose a different username." });
+  }
+
+  if (normalizedEmail) {
+    const existingEmail = await User.findOne({ email: normalizedEmail }).select("_id");
+
+    if (existingEmail) {
+      return res.status(409).json({ message: "Email already exists. Login or use another email." });
+    }
   }
 
   const hashedPassword = await bcrypt.hash(password, 12);
   const user = await User.create({
-    name,
+    name: displayName,
     username: normalizedUsername,
     ...(normalizedEmail ? { email: normalizedEmail } : {}),
     password: hashedPassword,

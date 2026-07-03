@@ -3,6 +3,7 @@ import {
   createMeeting,
   deleteMeeting,
   endMeeting,
+  getMeetingByInvite,
   getMeeting,
   listMeetings,
   startMeeting,
@@ -16,6 +17,7 @@ router.use(requireAuth);
 
 router.get("/", listMeetings);
 router.post("/", createMeeting);
+router.get("/invite/:inviteToken", getMeetingByInvite);
 router.get("/:code", getMeeting);
 router.patch("/:code", updateMeeting);
 router.patch("/:code/start", startMeeting);

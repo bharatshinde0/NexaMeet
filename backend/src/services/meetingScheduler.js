@@ -26,9 +26,11 @@ const activateDueMeetings = async () => {
 };
 
 const deleteExpiredMeetings = async () => {
+  const now = new Date();
   const expiresBefore = new Date(Date.now() - meetingRetentionMs());
   const expiredMeetings = await Meeting.find({
     $or: [
+      { expiresAt: { $lte: now } },
       { scheduledAt: { $lte: expiresBefore } },
       { scheduledAt: { $exists: false }, createdAt: { $lte: expiresBefore } },
     ],
