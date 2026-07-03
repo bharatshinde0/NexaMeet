@@ -193,6 +193,7 @@ export default function MeetingRoom() {
   const [blurEnabled, setBlurEnabled] = useState(false);
   const [copied, setCopied] = useState(false);
   const [pinnedTileId, setPinnedTileId] = useState("local");
+  const [pinMode, setPinMode] = useState(false);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
 
   const meetingCode = meeting?.roomCode || routeCode;
@@ -274,10 +275,14 @@ export default function MeetingRoom() {
     ...remoteTiles,
     ...screenTiles,
   ];
-  const useTwoPersonLayout = videoTiles.length <= 2;
+  const useTwoPersonLayout = videoTiles.length <= 2 && !pinMode;
   const pinnedTile = videoTiles.find((tile) => tile.id === pinnedTileId) || videoTiles[0];
   const sideTiles = videoTiles.filter((tile) => tile.id !== pinnedTile.id);
   const hasRemoteParticipants = remoteTiles.length > 0;
+  const pinTile = (tileId) => {
+    setPinnedTileId(tileId);
+    setPinMode(true);
+  };
 
   const refreshMessages = useCallback(async (targetCode = meetingCode) => {
     if (!targetCode) return;
@@ -848,10 +853,14 @@ export default function MeetingRoom() {
       screenTracks.forEach((track) => track.stop());
     }
 
-    socketRef.current?.emit("screen-share-state", { sharing: false, streamId: screenStream.id });
-    screenStreamRef.current = null;
-    setLocalScreenStream(null);
-    setSharingScreen(false);
+      socketRef.current?.emit("screen-share-state", { sharing: false, streamId: screenStream.id });
+      screenStreamRef.current = null;
+      setLocalScreenStream(null);
+      setSharingScreen(false);
+      if (pinnedTileId === "local-screen") {
+        setPinnedTileId("local");
+        setPinMode(false);
+      }
   };
 
   const shareScreen = async () => {
@@ -882,6 +891,7 @@ export default function MeetingRoom() {
       socketRef.current?.emit("screen-share-state", { sharing: true, streamId: screenStream.id });
       setSharingScreen(true);
       setPinnedTileId("local-screen");
+      setPinMode(true);
       setError("");
 
       screenTrack.onended = async () => {
@@ -1121,7 +1131,8 @@ export default function MeetingRoom() {
                   key={tile.id}
                   tile={tile}
                   isMain={videoTiles.length === 1}
-                  onPin={setPinnedTileId}
+                  isPinned={tile.id === pinnedTile.id}
+                  onPin={pinTile}
                   onRetryAudio={() => requestMissingMediaTrack("audio").catch(() => {})}
                   onRetryVideo={() => requestMissingMediaTrack("video").catch(() => {})}
                 />
@@ -1147,7 +1158,7 @@ export default function MeetingRoom() {
                 tile={pinnedTile}
                 isMain
                 isPinned
-                onPin={setPinnedTileId}
+                onPin={pinTile}
                 onRetryAudio={() => requestMissingMediaTrack("audio").catch(() => {})}
                 onRetryVideo={() => requestMissingMediaTrack("video").catch(() => {})}
               />
@@ -1157,7 +1168,7 @@ export default function MeetingRoom() {
                     key={tile.id}
                     tile={tile}
                     isPinned={tile.id === pinnedTile.id}
-                    onPin={setPinnedTileId}
+                    onPin={pinTile}
                     onRetryAudio={() => requestMissingMediaTrack("audio").catch(() => {})}
                     onRetryVideo={() => requestMissingMediaTrack("video").catch(() => {})}
                   />

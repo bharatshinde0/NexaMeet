@@ -929,6 +929,10 @@ p {
   gap: 10px;
 }
 
+.video-grid-pinned .video-filmstrip .video-tile {
+  min-height: 112px;
+}
+
 .mini-video-tile {
   min-height: 0;
 }
@@ -1593,6 +1597,11 @@ p {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) auto;
     min-height: 0;
+  }
+
+  .video-grid-pinned {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) 126px;
   }
 
   .video-grid-two-up {
