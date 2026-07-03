@@ -15,6 +15,7 @@ import {
   Pin,
   Radio,
   Send,
+  Settings,
   Share2,
   Sparkles,
   Square,
@@ -42,10 +43,48 @@ const buildIceServers = () => {
 };
 
 const iceServers = buildIceServers();
-const insecureLanMediaMessage =
-  "Camera and microphone need a secure browser permission. If this is HTTPS, close floating bubbles/overlays, allow camera and microphone in site settings, then tap the camera button again.";
 
 const canUseMediaDevices = () => Boolean(navigator.mediaDevices?.getUserMedia);
+
+const blockedMediaNames = new Set(["NotAllowedError", "SecurityError", "PermissionDeniedError"]);
+
+const describeMediaProblem = (err, kind = "camera and microphone") => {
+  const label = kind === "audio" ? "Microphone" : kind === "video" ? "Camera" : "Camera and microphone";
+  const name = err?.name || "";
+
+  if (!canUseMediaDevices()) {
+    return {
+      title: `${label} unavailable`,
+      detail: "Use an HTTPS Render URL in Chrome, Edge, or Safari. Camera and microphone do not work from insecure browser pages.",
+    };
+  }
+
+  if (blockedMediaNames.has(name)) {
+    return {
+      title: `${label} permission blocked`,
+      detail: "Close floating bubbles/overlays, allow camera and microphone in browser site settings, then tap Try again.",
+    };
+  }
+
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return {
+      title: `${label} not found`,
+      detail: "Check that this device has a working camera/microphone and that browser site permission is allowed.",
+    };
+  }
+
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return {
+      title: `${label} is busy`,
+      detail: "Close other apps using the camera or microphone, then tap Try again.",
+    };
+  }
+
+  return {
+    title: `${label} could not start`,
+    detail: err?.message || "Check browser permissions and try again.",
+  };
+};
 
 const messageKey = (message) =>
   message._id || message.clientId || `${message.senderName}-${message.createdAt}-${message.content}`;
@@ -98,6 +137,8 @@ export default function MeetingRoom() {
   const [generatingSummary, setGeneratingSummary] = useState(false);
   const [messageText, setMessageText] = useState("");
   const [error, setError] = useState("");
+  const [mediaIssue, setMediaIssue] = useState(null);
+  const [mediaBusy, setMediaBusy] = useState(false);
   const [socketStatus, setSocketStatus] = useState("connecting");
   const [activeTab, setActiveTab] = useState("chat");
   const [audioEnabled, setAudioEnabled] = useState(true);
@@ -153,6 +194,8 @@ export default function MeetingRoom() {
       handRaised,
       videoEnabled,
       softFocus: blurEnabled,
+      mediaIssue,
+      mediaBusy,
     },
     ...remoteTiles,
   ];
@@ -287,6 +330,52 @@ export default function MeetingRoom() {
     [removePeer, sendOffer, setPeerState]
   );
 
+  const startLocalMedia = async () => {
+    let stream = new MediaStream();
+
+    if (!canUseMediaDevices()) {
+      setAudioEnabled(false);
+      setVideoEnabled(false);
+      setMediaIssue(describeMediaProblem(null));
+      return stream;
+    }
+
+    setMediaBusy(true);
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setMediaIssue(null);
+    } catch (mediaError) {
+      setAudioEnabled(false);
+      setVideoEnabled(false);
+      setMediaIssue(describeMediaProblem(mediaError));
+
+      if (!blockedMediaNames.has(mediaError?.name || "")) {
+        for (const kind of ["audio", "video"]) {
+          try {
+            const partialStream = await navigator.mediaDevices.getUserMedia({
+              audio: kind === "audio",
+              video: kind === "video",
+            });
+            partialStream.getTracks().forEach((track) => stream.addTrack(track));
+          } catch {
+            // The user can retry each missing device from the local tile.
+          }
+        }
+
+        if (stream.getTracks().length > 0) {
+          setMediaIssue(null);
+        }
+      }
+    } finally {
+      setMediaBusy(false);
+    }
+
+    setAudioEnabled(stream.getAudioTracks().some((track) => track.enabled));
+    setVideoEnabled(stream.getVideoTracks().some((track) => track.enabled));
+    return stream;
+  };
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, activeTab]);
@@ -330,25 +419,7 @@ export default function MeetingRoom() {
         setSummaries(summaryData.summaries);
         await api.patch(`/meetings/${activeMeetingCode}/start`);
 
-        let stream = new MediaStream();
-
-        if (canUseMediaDevices()) {
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-          } catch (mediaError) {
-            setAudioEnabled(false);
-            setVideoEnabled(false);
-            setError(
-              mediaError.name === "NotAllowedError" || mediaError.name === "SecurityError"
-                ? "Camera permission was blocked. Close screen overlays/bubbles, allow camera and microphone in the browser, then tap the camera button again."
-                : mediaError.message || "Camera or microphone could not start on this device."
-            );
-          }
-        } else {
-          setAudioEnabled(false);
-          setVideoEnabled(false);
-          setError(insecureLanMediaMessage);
-        }
+        const stream = await startLocalMedia();
 
         localStreamRef.current = stream;
         setLocalStream(stream);
@@ -495,13 +566,13 @@ export default function MeetingRoom() {
 
   const toggleAudio = () => {
     if (!canUseMediaDevices()) {
-      setError(insecureLanMediaMessage);
+      setMediaIssue(describeMediaProblem(null, "audio"));
       return;
     }
 
     if (!localStreamRef.current?.getAudioTracks().length) {
       requestMissingMediaTrack("audio").catch((err) =>
-        setError(err.message || "Microphone permission was blocked. Check browser permissions and try again.")
+        setMediaIssue(describeMediaProblem(err, "audio"))
       );
       return;
     }
@@ -515,13 +586,13 @@ export default function MeetingRoom() {
 
   const toggleVideo = () => {
     if (!canUseMediaDevices()) {
-      setError(insecureLanMediaMessage);
+      setMediaIssue(describeMediaProblem(null, "video"));
       return;
     }
 
     if (!localStreamRef.current?.getVideoTracks().length) {
       requestMissingMediaTrack("video").catch((err) =>
-        setError(err.message || "Camera permission was blocked. Check browser permissions and try again.")
+        setMediaIssue(describeMediaProblem(err, "video"))
       );
       return;
     }
@@ -534,14 +605,27 @@ export default function MeetingRoom() {
   };
 
   const requestMissingMediaTrack = async (kind) => {
-    const nextStream = await navigator.mediaDevices.getUserMedia({
-      audio: kind === "audio",
-      video: kind === "video",
-    });
+    setMediaBusy(true);
+    let nextStream;
+
+    try {
+      nextStream = await navigator.mediaDevices.getUserMedia({
+        audio: kind === "audio",
+        video: kind === "video",
+      });
+    } catch (err) {
+      setMediaIssue(describeMediaProblem(err, kind));
+      throw err;
+    } finally {
+      setMediaBusy(false);
+    }
+
     const [track] = kind === "audio" ? nextStream.getAudioTracks() : nextStream.getVideoTracks();
 
     if (!track) {
-      throw new Error(`${kind === "audio" ? "Microphone" : "Camera"} did not return a media track.`);
+      const err = new Error(`${kind === "audio" ? "Microphone" : "Camera"} did not return a media track.`);
+      setMediaIssue(describeMediaProblem(err, kind));
+      throw err;
     }
 
     const currentStream = localStreamRef.current || new MediaStream();
@@ -562,6 +646,7 @@ export default function MeetingRoom() {
     }
 
     setError("");
+    setMediaIssue(null);
   };
 
   const toggleHand = () => {
@@ -823,7 +908,14 @@ export default function MeetingRoom() {
           {useTwoPersonLayout ? (
             <>
               {videoTiles.map((tile) => (
-                <VideoTile key={tile.id} tile={tile} isMain={videoTiles.length === 1} onPin={setPinnedTileId} />
+                <VideoTile
+                  key={tile.id}
+                  tile={tile}
+                  isMain={videoTiles.length === 1}
+                  onPin={setPinnedTileId}
+                  onRetryAudio={() => requestMissingMediaTrack("audio").catch(() => {})}
+                  onRetryVideo={() => requestMissingMediaTrack("video").catch(() => {})}
+                />
               ))}
               {!hasRemoteParticipants && (
                 <div className="meeting-waiting-panel">
@@ -842,7 +934,14 @@ export default function MeetingRoom() {
             </>
           ) : (
             <>
-              <VideoTile tile={pinnedTile} isMain isPinned onPin={setPinnedTileId} />
+              <VideoTile
+                tile={pinnedTile}
+                isMain
+                isPinned
+                onPin={setPinnedTileId}
+                onRetryAudio={() => requestMissingMediaTrack("audio").catch(() => {})}
+                onRetryVideo={() => requestMissingMediaTrack("video").catch(() => {})}
+              />
               <aside className="video-filmstrip" aria-label="Participants">
                 {sideTiles.map((tile) => (
                   <VideoTile
@@ -850,6 +949,8 @@ export default function MeetingRoom() {
                     tile={tile}
                     isPinned={tile.id === pinnedTile.id}
                     onPin={setPinnedTileId}
+                    onRetryAudio={() => requestMissingMediaTrack("audio").catch(() => {})}
+                    onRetryVideo={() => requestMissingMediaTrack("video").catch(() => {})}
                   />
                 ))}
               </aside>
@@ -1052,7 +1153,7 @@ function StreamVideo({ stream, muted = false }) {
   return <video ref={videoRef} autoPlay muted={muted} playsInline />;
 }
 
-function VideoTile({ tile, isMain = false, isPinned = false, onPin }) {
+function VideoTile({ tile, isMain = false, isPinned = false, onPin, onRetryAudio, onRetryVideo }) {
   const label = `${tile.name || "Guest"}${tile.isLocal ? " (You)" : ""}`;
   const connectionLabel = {
     connected: "Connected",
@@ -1073,7 +1174,24 @@ function VideoTile({ tile, isMain = false, isPinned = false, onPin }) {
         <StreamVideo stream={tile.stream} muted={tile.isLocal} />
       ) : (
         <div className="video-placeholder">
-          <span>{tile.videoEnabled === false ? "Camera off" : tile.isLocal ? "Starting camera..." : connectionLabel}</span>
+          {tile.isLocal && tile.mediaIssue ? (
+            <div className="tile-recovery">
+              <Settings size={22} />
+              <strong>{tile.mediaIssue.title}</strong>
+              <small>{tile.mediaIssue.detail}</small>
+              <div className="tile-recovery-actions">
+                <button type="button" onClick={onRetryAudio} disabled={tile.mediaBusy}>
+                  <Mic size={15} /> Mic
+                </button>
+                <button type="button" onClick={onRetryVideo} disabled={tile.mediaBusy}>
+                  <Camera size={15} /> Camera
+                </button>
+              </div>
+              {tile.mediaBusy && <small>Asking browser permission...</small>}
+            </div>
+          ) : (
+            <span>{tile.videoEnabled === false ? "Camera off" : tile.isLocal ? "Starting camera..." : connectionLabel}</span>
+          )}
         </div>
       )}
       {tile.handRaised && <b className="tile-badge">Hand raised</b>}
